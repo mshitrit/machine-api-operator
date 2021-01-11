@@ -2,12 +2,15 @@ package machinehealthcheck
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/openshift/machine-api-operator/pkg/util/external"
+	"github.com/pkg/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/klog/v2"
@@ -238,15 +241,8 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 		klog.Errorf("Reconciling %s: error patching status: %v", request.String(), err)
 		return reconcile.Result{}, err
 	}
-
-	// remediate
-	for _, t := range needRemediationTargets {
-		klog.V(3).Infof("Reconciling %s: meet unhealthy criteria, triggers remediation", t.string())
-		if err := t.remediate(r); err != nil {
-			klog.Errorf("Reconciling %s: error remediating: %v", t.string(), err)
-			errList = append(errList, err)
-		}
-	}
+	//TODO(mshitrit) entry point
+	errList = r.remediate(ctx, needRemediationTargets, errList, mhc)
 
 	// return values
 	if len(errList) > 0 {
@@ -264,6 +260,121 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 	return reconcile.Result{}, nil
 }
 
+//TODO (mshitrit): use better func name
+func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemediationTargets []target, errList []error, m *mapiv1.MachineHealthCheck) []error {
+	// remediate
+	for _, t := range needRemediationTargets {
+		condition := conditions.Get(&t.Machine, mapiv1.MachineHealthCheckSucceededCondition)
+		//TODO(mshitrit): should we consider pause logic ? (was not part of PR)
+		/*if annotations.IsPaused(cluster, t.Machine) {
+			logger.Info("Machine has failed health check, but machine is paused so skipping remediation", "target", t.string(), "reason", condition.Reason, "message", condition.Message)
+
+		} else {*/
+		if m.Spec.RemediationTemplate != nil {
+			errList = r.externalRemediation(ctx, m, t, errList, condition)
+
+		} else {
+			//TODO(mshitrit) - is this code needed ?
+			//TODO(mshitrit) consider location
+			//TODO(mshitrit) - is condition valid to be nil
+			//klog.V(3).Infof("Target has failed health check, marking for remediation", "target", t.string(), "reason", condition.Reason, "message", condition.Message)
+
+			// NOTE: MHC is responsible for creating MachineOwnerRemediatedCondition if missing or to trigger another remediation if the previous one is completed;
+			// instead, if a remediation is in already progress, the remediation owner is responsible for completing the process and MHC should not overwrite the condition.
+			if !conditions.Has(&t.Machine, mapiv1.MachineOwnerRemediatedCondition) || conditions.IsTrue(&t.Machine, mapiv1.MachineOwnerRemediatedCondition) {
+				conditions.MarkFalse(&t.Machine, mapiv1.MachineOwnerRemediatedCondition, mapiv1.WaitingForRemediationReason, mapiv1.ConditionSeverityWarning, "")
+			}
+
+
+			//Prev Code
+			klog.V(3).Infof("Reconciling %s: meet unhealthy criteria, triggers remediation", t.string())
+
+			if err := t.internalRemediation(r); err != nil {
+				klog.Errorf("Reconciling %s: error remediating: %v", t.string(), err)
+				errList = append(errList, err)
+			}
+
+			//TODO(mshitrit) PR has some logic of patching healthy targets here - need to understand if relevant
+		}
+
+	}
+	return errList
+}
+
+func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m *mapiv1.MachineHealthCheck, t target, errList []error, condition *mapiv1.Condition) []error {
+	// If external remediation request already exists,
+	// return early
+	if r.externalRemediationRequestExists(ctx, m, t.Machine.Name) {
+		return errList
+	}
+
+	cloneOwnerRef := &metav1.OwnerReference{
+		APIVersion: mapiv1.SchemeGroupVersion.String(),
+		Kind:       "Machine",
+		Name:       t.Machine.Name,
+		UID:        t.Machine.UID,
+	}
+	from, err := external.Get(ctx, r.client, m.Spec.RemediationTemplate, t.Machine.Namespace)
+	if err != nil {
+		conditions.MarkFalse(m, mapiv1.ExternalRemediationTemplateAvailable, mapiv1.ExternalRemediationTemplateNotFound, mapiv1.ConditionSeverityError, err.Error())
+		errList = append(errList, errors.Wrapf(err, "error retrieving remediation template %v %q for machine %q in namespace %q within cluster %q", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, m.Spec.ClusterName))
+		return errList
+	}
+
+	generateTemplateInput := &external.GenerateTemplateInput{
+		Template:    from,
+		TemplateRef: m.Spec.RemediationTemplate,
+		Namespace:   t.Machine.Namespace,
+		ClusterName: t.Machine.ClusterName,
+		OwnerRef:    cloneOwnerRef,
+	}
+	to, err := external.GenerateTemplate(generateTemplateInput)
+	if err != nil {
+		errList = append(errList, errors.Wrapf(err, "failed to create template for remediation request %v %q for machine %q in namespace %q within cluster %q", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, m.Spec.ClusterName))
+		return errList
+	}
+
+	// Set the Remediation Request to match the Machine name, the name is used to
+	// guarantee uniqueness between runs. A Machine should only ever have a single
+	// remediation object of a specific GVK created.
+	//
+	// NOTE: This doesn't guarantee uniqueness across different MHC objects watching
+	// the same Machine, users are in charge of setting health checks and remediation properly.
+	to.SetName(t.Machine.Name)
+
+	klog.V(3).Infof("Target has failed health check, creating an external remediation request", "remediation request name", to.GetName(), "target", t.string(), "reason", condition.Reason, "message", condition.Message)
+	// Create the external clone.
+	if err := r.client.Create(ctx, to); err != nil {
+		conditions.MarkFalse(m, mapiv1.ExternalRemediationRequestAvailable, mapiv1.ExternalRemediationRequestCreationFailed, mapiv1.ConditionSeverityError, err.Error())
+		errList = append(errList, errors.Wrapf(err, "error creating remediation request for machine %q in namespace %q within cluster %q", t.Machine.Name, t.Machine.Namespace, t.Machine.ClusterName))
+		return errList
+	}
+	return errList
+}
+
+// getExternalRemediationRequest gets reference to External Remediation Request, unstructured object.
+func (r *ReconcileMachineHealthCheck) getExternalRemediationRequest(ctx context.Context, m *mapiv1.MachineHealthCheck, machineName string) (*unstructured.Unstructured, error) {
+	remediationRef := &corev1.ObjectReference{
+		APIVersion: m.Spec.RemediationTemplate.APIVersion,
+		Kind:       strings.TrimSuffix(m.Spec.RemediationTemplate.Kind, external.TemplateSuffix),
+		Name:       machineName,
+	}
+	remediationReq, err := external.Get(ctx, r.client, remediationRef, m.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve external remediation request object: %v", err)
+	}
+	return remediationReq, nil
+}
+
+// externalRemediationRequestExists checks if the External Remediation Request is created
+// for the machine.
+func (r *ReconcileMachineHealthCheck) externalRemediationRequestExists(ctx context.Context, m *mapiv1.MachineHealthCheck, machineName string) bool {
+	remediationReq, err := r.getExternalRemediationRequest(ctx, m, machineName)
+	if err != nil {
+		return false
+	}
+	return remediationReq != nil
+}
 func isAllowedRemediation(mhc *mapiv1.MachineHealthCheck) bool {
 	maxUnhealthy, err := getMaxUnhealthy(mhc)
 	if err != nil {
@@ -487,8 +598,8 @@ func (r *ReconcileMachineHealthCheck) mhcRequestsFromMachine(o client.Object) []
 	}
 	return requests
 }
-
-func (t *target) remediate(r *ReconcileMachineHealthCheck) error {
+//TODO(mshitrit) reconsider method name
+func (t *target) internalRemediation(r *ReconcileMachineHealthCheck) error {
 	klog.Infof(" %s: start remediation logic", t.string())
 
 	if derefStringPointer(t.Machine.Status.Phase) != machinePhaseFailed {
@@ -686,7 +797,7 @@ func minDuration(durations []time.Duration) time.Duration {
 		return time.Duration(0)
 	}
 
-	minDuration := time.Duration(1 * time.Hour)
+	minDuration := time.Hour
 	for _, nc := range durations {
 		if nc < minDuration {
 			minDuration = nc
@@ -764,7 +875,7 @@ func getIntOrPercentValue(intOrStr *intstr.IntOrString) (int, bool, error) {
 		if err != nil {
 			return 0, isPercent, fmt.Errorf("invalid value %q: %v", intOrStr.StrVal, err)
 		}
-		return int(v), isPercent, nil
+		return v, isPercent, nil
 	}
 	return 0, false, fmt.Errorf("invalid type: neither int nor percentage")
 }

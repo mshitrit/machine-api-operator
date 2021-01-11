@@ -49,6 +49,10 @@ type MachineHealthCheckList struct {
 
 // MachineHealthCheckSpec defines the desired state of MachineHealthCheck
 type MachineHealthCheckSpec struct {
+	// ClusterName is the name of the Cluster this object belongs to.
+	// +kubebuilder:validation:MinLength=1
+	ClusterName string `json:"clusterName"`
+
 	// Label selector to match machines whose health will be exercised.
 	// Note: An empty selector will match all machines.
 	Selector metav1.LabelSelector `json:"selector"`
@@ -80,6 +84,15 @@ type MachineHealthCheckSpec struct {
 	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
 	// +kubebuilder:validation:Type:=string
 	NodeStartupTimeout metav1.Duration `json:"nodeStartupTimeout,omitempty"`
+
+	// RemediationTemplate is a reference to a remediation template
+	// provided by an infrastructure provider.
+	//
+	// This field is completely optional, when filled, the MachineHealthCheck controller
+	// creates a new object from the template referenced and hands off remediation of the machine to
+	// a controller that lives outside of Cluster API.
+	// +optional
+	RemediationTemplate *corev1.ObjectReference `json:"remediationTemplate,omitempty"`
 }
 
 // UnhealthyCondition represents a Node condition type and value with a timeout

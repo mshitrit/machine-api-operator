@@ -2046,7 +2046,7 @@ func TestRemediate(t *testing.T) {
 			objects = append(objects, runtime.Object(&tc.target.Machine))
 			recorder := record.NewFakeRecorder(2)
 			r := newFakeReconcilerWithCustomRecorder(recorder, objects...)
-			if err := tc.target.remediate(r); (err != nil) != tc.expectedError {
+			if err := tc.target.internalRemediation(r); (err != nil) != tc.expectedError {
 				t.Errorf("Case: %v. Got: %v, expected error: %v", tc.testCase, err, tc.expectedError)
 			}
 			assertEvents(t, tc.testCase, tc.expectedEvents, recorder.Events)
