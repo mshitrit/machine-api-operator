@@ -128,17 +128,6 @@ func GenerateTemplate(in *GenerateTemplateInput) (*unstructured.Unstructured, er
 	annotations[mapiv1.TemplateClonedFromGroupKindAnnotation] = in.TemplateRef.GroupVersionKind().GroupKind().String()
 	to.SetAnnotations(annotations)
 
-	// Set labels.
-	labels := to.GetLabels()
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	for key, value := range in.Labels {
-		labels[key] = value
-	}
-	labels[mapiv1.ClusterLabelName] = in.ClusterName
-	to.SetLabels(labels)
-
 	// Set the owner reference.
 	if in.OwnerRef != nil {
 		to.SetOwnerReferences([]metav1.OwnerReference{*in.OwnerRef})
@@ -155,7 +144,3 @@ func GenerateTemplate(in *GenerateTemplateInput) (*unstructured.Unstructured, er
 	}
 	return to, nil
 }
-
-
-
-

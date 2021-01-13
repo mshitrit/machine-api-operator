@@ -49,10 +49,6 @@ spec:
           spec:
             description: Specification of machine health check policy
             properties:
-              clusterName:
-                description: ClusterName is the name of the Cluster this object belongs to.
-                minLength: 1
-                type: string
               maxUnhealthy:
                 anyOf:
                 - type: integer
@@ -145,7 +141,6 @@ spec:
                 minItems: 1
                 type: array
             required:
-            - clusterName
             - selector
             - unhealthyConditions
             type: object

@@ -18,7 +18,6 @@ package conditions
 
 import (
 	mapiv1 "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -47,18 +46,4 @@ func Get(from Getter, t mapiv1.ConditionType) *mapiv1.Condition {
 		}
 	}
 	return nil
-}
-
-// Has returns true if a condition with the given type exists.
-func Has(from Getter, t mapiv1.ConditionType) bool {
-	return Get(from, t) != nil
-}
-
-// IsTrue is true if the condition with the given type is True, otherwise it return false
-// if the condition is not True or if the condition does not exist (is nil).
-func IsTrue(from Getter, t mapiv1.ConditionType) bool {
-	if c := Get(from, t); c != nil {
-		return c.Status == corev1.ConditionTrue
-	}
-	return false
 }
