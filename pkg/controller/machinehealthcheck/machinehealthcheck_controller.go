@@ -2,6 +2,7 @@ package machinehealthcheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/openshift/machine-api-operator/pkg/util/external"
-	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -292,7 +292,7 @@ func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m
 	from, err := external.Get(ctx, r.client, m.Spec.RemediationTemplate, t.Machine.Namespace)
 	if err != nil {
 		conditions.MarkFalse(m, mapiv1.ExternalRemediationTemplateAvailable, mapiv1.ExternalRemediationTemplateNotFound, mapiv1.ConditionSeverityError, err.Error())
-		errList = append(errList, errors.Wrapf(err, "error retrieving remediation template %v %q for machine %q in namespace %q ", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace))
+		errList = append(errList, fmt.Errorf("error retrieving remediation template %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err))
 		return errList
 	}
 
@@ -305,7 +305,7 @@ func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m
 	}
 	to, err := external.GenerateTemplate(generateTemplateInput)
 	if err != nil {
-		errList = append(errList, errors.Wrapf(err, "failed to create template for remediation request %v %q for machine %q in namespace %q", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace))
+		errList = append(errList, fmt.Errorf("failed to create template for remediation request %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err))
 		return errList
 	}
 
@@ -321,7 +321,7 @@ func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m
 	// Create the external clone.
 	if err := r.client.Create(ctx, to); err != nil {
 		conditions.MarkFalse(m, mapiv1.ExternalRemediationRequestAvailable, mapiv1.ExternalRemediationRequestCreationFailed, mapiv1.ConditionSeverityError, err.Error())
-		errList = append(errList, errors.Wrapf(err, "error creating remediation request for machine %q in namespace %q within cluster %q", t.Machine.Name, t.Machine.Namespace, t.Machine.ClusterName))
+		errList = append(errList, fmt.Errorf("error creating remediation request for machine %q in namespace %q within cluster %q: %v", t.Machine.Name, t.Machine.Namespace, t.Machine.ClusterName, err))
 		return errList
 	}
 	return errList
