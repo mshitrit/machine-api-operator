@@ -277,11 +277,18 @@ func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemedia
 }
 
 func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m *mapiv1.MachineHealthCheck, t target, errList []error) []error {
-	// If external remediation request already exists,
-	// return early
-	if r.externalRemediationRequestExists(ctx, m, t.Machine.Name) {
+
+	re, err := r.externalRemediationRequestExists(ctx, m, t.Machine.Name)
+	if err != nil {
+		errList = append(errList, fmt.Errorf("error retrieving external remediation  %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err))
 		return errList
 	}
+	// If external remediation request already exists,
+	// return early
+	if re {
+		return errList
+	}
+
 
 	cloneOwnerRef := &metav1.OwnerReference{
 		APIVersion: mapiv1.SchemeGroupVersion.String(),
@@ -343,12 +350,12 @@ func (r *ReconcileMachineHealthCheck) getExternalRemediationRequest(ctx context.
 
 // externalRemediationRequestExists checks if the External Remediation Request is created
 // for the machine.
-func (r *ReconcileMachineHealthCheck) externalRemediationRequestExists(ctx context.Context, m *mapiv1.MachineHealthCheck, machineName string) bool {
+func (r *ReconcileMachineHealthCheck) externalRemediationRequestExists(ctx context.Context, m *mapiv1.MachineHealthCheck, machineName string) (bool, error) {
 	remediationReq, err := r.getExternalRemediationRequest(ctx, m, machineName)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return remediationReq != nil
+	return remediationReq != nil, nil
 }
 
 func isAllowedRemediation(mhc *mapiv1.MachineHealthCheck) bool {
