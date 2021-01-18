@@ -2516,7 +2516,7 @@ func TestHealthCheckTargets(t *testing.T) {
 		r := newFakeReconcilerWithCustomRecorder(recorder)
 		t.Run(tc.testCase, func(t *testing.T) {
 			currentHealhty, needRemediationTargets, nextCheckTimes, errList := r.healthCheckTargets(tc.targets, tc.timeoutForMachineToHaveNode)
-			if currentHealhty != tc.currentHealthy {
+			if len(currentHealhty) != tc.currentHealthy {
 				t.Errorf("Case: %v. Got: %v, expected: %v", tc.testCase, currentHealhty, tc.currentHealthy)
 			}
 			if !equality.Semantic.DeepEqual(needRemediationTargets, tc.needRemediationTargets) {

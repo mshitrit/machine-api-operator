@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/openshift/machine-api-operator/pkg/util/external"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -182,9 +183,10 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 
 	// health check all targets and reconcile mhc status
 	currentHealthy, needRemediationTargets, nextCheckTimes, errList := r.healthCheckTargets(targets, mhc.Spec.NodeStartupTimeout.Duration)
-	mhc.Status.CurrentHealthy = &currentHealthy
+	healthyCount := len(currentHealthy)
+	mhc.Status.CurrentHealthy = &healthyCount
 	mhc.Status.ExpectedMachines = &totalTargets
-	unhealthyCount := totalTargets - currentHealthy
+	unhealthyCount := totalTargets - healthyCount
 
 	// check MHC current health against MaxUnhealthy
 	if !isAllowedRemediation(mhc) {
@@ -192,7 +194,7 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 			request.String(),
 			totalTargets,
 			mhc.Spec.MaxUnhealthy,
-			totalTargets-currentHealthy,
+			totalTargets-healthyCount,
 		)
 
 		message := fmt.Sprintf("Remediation is not allowed, the number of not started or unhealthy machines exceeds maxUnhealthy (total: %v, unhealthy: %v, maxUnhealthy: %v)",
@@ -241,7 +243,7 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 		klog.Errorf("Reconciling %s: error patching status: %v", request.String(), err)
 		return reconcile.Result{}, err
 	}
-	errList = r.remediate(ctx, needRemediationTargets, errList, mhc)
+	errList = r.remediate(ctx, currentHealthy, needRemediationTargets, errList, mhc)
 
 	// return values
 	if len(errList) > 0 {
@@ -259,8 +261,8 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemediationTargets []target, errList []error, m *mapiv1.MachineHealthCheck) []error {
-	// remediate
+func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, currentHealthy []target, needRemediationTargets []target, errList []error, m *mapiv1.MachineHealthCheck) []error {
+	// remediate unhealthy
 	for _, t := range needRemediationTargets {
 		klog.V(3).Infof("Reconciling %s: meet unhealthy criteria, triggers remediation", t.string())
 		if m.Spec.RemediationTemplate != nil {
@@ -273,6 +275,28 @@ func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemedia
 		}
 
 	}
+
+	for _, t := range currentHealthy {
+		if m.Spec.RemediationTemplate != nil {
+
+			// Get remediation request object
+			obj, err := r.getExternalRemediationRequest(ctx, m, t.Machine.Name)
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				klog.Errorf("failed to fetch remediation request for machine %q in namespace %q within cluster %q: %v", t.Machine.Name, t.Machine.Namespace, t.Machine.ClusterName, err)
+			}
+			// Check that obj has no DeletionTimestamp to avoid hot loop
+			if obj.GetDeletionTimestamp() == nil {
+				// Issue a delete for remediation request.
+				if err := r.client.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+					klog.Errorf("failed to delete %v %q for Machine %q: %v", obj.GroupVersionKind(), obj.GetName(), t.Machine.Name, err)
+				}
+			}
+		}
+	}
+
 	return errList
 }
 
@@ -288,7 +312,6 @@ func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m
 	if re {
 		return errList
 	}
-
 
 	cloneOwnerRef := &metav1.OwnerReference{
 		APIVersion: mapiv1.SchemeGroupVersion.String(),
@@ -417,11 +440,7 @@ func (r *ReconcileMachineHealthCheck) reconcileStatus(baseToPatch client.Patch, 
 
 // healthCheckTargets health checks a slice of targets
 // and gives a data to measure the average health
-func (r *ReconcileMachineHealthCheck) healthCheckTargets(targets []target, timeoutForMachineToHaveNode time.Duration) (int, []target, []time.Duration, []error) {
-	var nextCheckTimes []time.Duration
-	var errList []error
-	var needRemediationTargets []target
-	var currentHealthy int
+func (r *ReconcileMachineHealthCheck) healthCheckTargets(targets []target, timeoutForMachineToHaveNode time.Duration) (currentHealthy []target, needRemediationTargets []target, nextCheckTimes []time.Duration, errList []error) {
 	for _, t := range targets {
 		klog.V(3).Infof("Reconciling %s: health checking", t.string())
 		needsRemediation, nextCheck, err := t.needsRemediation(timeoutForMachineToHaveNode)
@@ -451,7 +470,7 @@ func (r *ReconcileMachineHealthCheck) healthCheckTargets(targets []target, timeo
 		}
 
 		if t.Machine.DeletionTimestamp == nil {
-			currentHealthy++
+			currentHealthy = append(currentHealthy, t)
 		}
 	}
 	return currentHealthy, needRemediationTargets, nextCheckTimes, errList
