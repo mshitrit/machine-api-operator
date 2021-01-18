@@ -32,13 +32,11 @@ const (
 	namespace = "openshift-machine-api"
 )
 
-var (
-	ctx = context.Background()
-)
-
 func init() {
 	// Add types to scheme
-	mapiv1beta1.AddToScheme(scheme.Scheme)
+	if err:= mapiv1beta1.AddToScheme(scheme.Scheme); err != nil{
+		panic(err)
+	}
 }
 
 func TestHasMatchingLabels(t *testing.T) {
@@ -179,7 +177,7 @@ func newFakeReconciler(initObjects ...runtime.Object) *ReconcileMachineHealthChe
 }
 
 func newFakeReconcilerWithCustomRecorder(recorder record.EventRecorder, initObjects ...runtime.Object) *ReconcileMachineHealthCheck {
-	fakeClient := fake.NewFakeClient(initObjects...)
+	fakeClient := fake.NewClientBuilder().WithRuntimeObjects(initObjects...).Build()
 	return &ReconcileMachineHealthCheck{
 		client:    fakeClient,
 		scheme:    scheme.Scheme,
@@ -494,6 +492,9 @@ func TestReconcile(t *testing.T) {
 				},
 			}
 			result, err := r.Reconcile(ctx, request)
+			if &result == nil {
+				t.Errorf("Test case: %s. Expected: non nil result error, got: nil", tc.node.Name)
+			}
 			assertEvents(t, tc.testCase, tc.expectedEvents, recorder.Events)
 			if tc.expected.error != (err != nil) {
 				var errorExpectation string
