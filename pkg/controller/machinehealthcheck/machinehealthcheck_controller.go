@@ -366,7 +366,7 @@ func (r *ReconcileMachineHealthCheck) getExternalRemediationRequest(ctx context.
 	}
 	remediationReq, err := external.Get(ctx, r.client, remediationRef, m.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve external remediation request object: %v", err)
+		return nil, err
 	}
 	return remediationReq, nil
 }
@@ -375,7 +375,7 @@ func (r *ReconcileMachineHealthCheck) getExternalRemediationRequest(ctx context.
 // for the machine.
 func (r *ReconcileMachineHealthCheck) externalRemediationRequestExists(ctx context.Context, m *mapiv1.MachineHealthCheck, machineName string) (bool, error) {
 	remediationReq, err := r.getExternalRemediationRequest(ctx, m, machineName)
-	if err != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return false, err
 	}
 	return remediationReq != nil, nil
