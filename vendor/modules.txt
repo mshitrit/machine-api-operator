@@ -247,8 +247,11 @@ github.com/russross/blackfriday
 github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.5
 github.com/spf13/pflag
+# github.com/stretchr/objx v0.2.0
+github.com/stretchr/objx
 # github.com/stretchr/testify v1.6.1
 github.com/stretchr/testify/assert
+github.com/stretchr/testify/mock
 # github.com/vmware/govmomi v0.22.2
 github.com/vmware/govmomi
 github.com/vmware/govmomi/find

@@ -25,6 +25,7 @@ require (
 	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
 	gopkg.in/gcfg.v1 v1.2.3
 	k8s.io/api v0.20.0
+	k8s.io/apiextensions-apiserver v0.20.0
 	k8s.io/apimachinery v0.20.0
 	k8s.io/apiserver v0.20.0
 	k8s.io/client-go v0.20.0
