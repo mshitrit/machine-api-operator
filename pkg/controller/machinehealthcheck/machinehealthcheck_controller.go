@@ -12,7 +12,6 @@ import (
 	"github.com/openshift/machine-api-operator/pkg/util/external"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/klog/v2"
 
@@ -243,8 +242,8 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 		klog.Errorf("Reconciling %s: error patching status: %v", request.String(), err)
 		return reconcile.Result{}, err
 	}
-	errList = r.remediate(ctx, currentHealthy, needRemediationTargets, errList, mhc)
-
+	errList = r.remediate(ctx, needRemediationTargets, errList, mhc)
+	r.cleanEMR(ctx, currentHealthy, mhc)
 	// return values
 	if len(errList) > 0 {
 		requeueError := apimachineryutilerrors.NewAggregate(errList)
@@ -261,56 +260,59 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, currentHealthy []target, needRemediationTargets []target, errList []error, m *mapiv1.MachineHealthCheck) []error {
+func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemediationTargets []target, errList []error, m *mapiv1.MachineHealthCheck) []error {
 	// remediate unhealthy
 	for _, t := range needRemediationTargets {
 		klog.V(3).Infof("Reconciling %s: meet unhealthy criteria, triggers remediation", t.string())
 		if m.Spec.RemediationTemplate != nil {
-			errList = r.externalRemediation(ctx, m, t, errList)
+			if err := r.externalRemediation(ctx, m, t); err != nil {
+				errList = append(errList, err)
+			}
 		} else {
-			if err := t.internalRemediation(r); err != nil {
+			if err := r.internalRemediation(t); err != nil {
 				klog.Errorf("Reconciling %s: error remediating: %v", t.string(), err)
 				errList = append(errList, err)
 			}
 		}
-
 	}
-
-	for _, t := range currentHealthy {
-		if m.Spec.RemediationTemplate != nil {
-
-			// Get remediation request object
-			obj, err := r.getExternalRemediationRequest(ctx, m, t.Machine.Name)
-			if err != nil {
-				if apierrors.IsNotFound(err) {
-					continue
-				}
-				klog.Errorf("failed to fetch remediation request for machine %q in namespace %q within cluster %q: %v", t.Machine.Name, t.Machine.Namespace, t.Machine.ClusterName, err)
-			}
-			// Check that obj has no DeletionTimestamp to avoid hot loop
-			if obj.GetDeletionTimestamp() == nil {
-				// Issue a delete for remediation request.
-				if err := r.client.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
-					klog.Errorf("failed to delete %v %q for Machine %q: %v", obj.GroupVersionKind(), obj.GetName(), t.Machine.Name, err)
-				}
-			}
-		}
-	}
-
 	return errList
 }
 
-func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m *mapiv1.MachineHealthCheck, t target, errList []error) []error {
+// deletes EMR for healthy machines
+func (r *ReconcileMachineHealthCheck) cleanEMR(ctx context.Context, currentHealthy []target, m *mapiv1.MachineHealthCheck) {
+	if m.Spec.RemediationTemplate == nil {
+		return
+	}
+	for _, t := range currentHealthy {
+
+		// Get remediation request object
+		obj, err := r.getExternalRemediationRequest(ctx, m, t.Machine.Name)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			klog.Errorf("failed to fetch remediation request for machine %q in namespace %q: %v", t.Machine.Name, t.Machine.Namespace, err)
+		}
+		// Check that obj has no DeletionTimestamp to avoid hot loop
+		if obj.GetDeletionTimestamp() == nil {
+			// Issue a delete for remediation request.
+			if err := r.client.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+				klog.Errorf("failed to delete %v %q for Machine %q: %v", obj.GroupVersionKind(), obj.GetName(), t.Machine.Name, err)
+			}
+		}
+	}
+}
+
+func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m *mapiv1.MachineHealthCheck, t target) error {
 
 	re, err := r.externalRemediationRequestExists(ctx, m, t.Machine.Name)
 	if err != nil {
-		errList = append(errList, fmt.Errorf("error retrieving external remediation  %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err))
-		return errList
+		return fmt.Errorf("error retrieving external remediation  %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err)
 	}
 	// If external remediation request already exists,
 	// return early
 	if re {
-		return errList
+		return nil
 	}
 
 	cloneOwnerRef := &metav1.OwnerReference{
@@ -322,21 +324,18 @@ func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m
 	from, err := external.Get(ctx, r.client, m.Spec.RemediationTemplate, t.Machine.Namespace)
 	if err != nil {
 		conditions.MarkFalse(m, mapiv1.ExternalRemediationTemplateAvailable, mapiv1.ExternalRemediationTemplateNotFound, mapiv1.ConditionSeverityError, err.Error())
-		errList = append(errList, fmt.Errorf("error retrieving remediation template %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err))
-		return errList
+		return fmt.Errorf("error retrieving remediation template %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err)
 	}
 
 	generateTemplateInput := &external.GenerateTemplateInput{
 		Template:    from,
 		TemplateRef: m.Spec.RemediationTemplate,
 		Namespace:   t.Machine.Namespace,
-		ClusterName: t.Machine.ClusterName,
 		OwnerRef:    cloneOwnerRef,
 	}
 	to, err := external.GenerateTemplate(generateTemplateInput)
 	if err != nil {
-		errList = append(errList, fmt.Errorf("failed to create template for remediation request %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err))
-		return errList
+		return fmt.Errorf("failed to create template for remediation request %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err)
 	}
 
 	// Set the Remediation Request to match the Machine name, the name is used to
@@ -351,10 +350,9 @@ func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m
 	// Create the external clone.
 	if err := r.client.Create(ctx, to); err != nil {
 		conditions.MarkFalse(m, mapiv1.ExternalRemediationRequestAvailable, mapiv1.ExternalRemediationRequestCreationFailed, mapiv1.ConditionSeverityError, err.Error())
-		errList = append(errList, fmt.Errorf("error creating remediation request for machine %q in namespace %q within cluster %q: %v", t.Machine.Name, t.Machine.Namespace, t.Machine.ClusterName, err))
-		return errList
+		return fmt.Errorf("error creating remediation request for machine %q in namespace %q: %v", t.Machine.Name, t.Machine.Namespace, err)
 	}
-	return errList
+	return nil
 }
 
 // getExternalRemediationRequest gets reference to External Remediation Request, unstructured object.
@@ -364,11 +362,7 @@ func (r *ReconcileMachineHealthCheck) getExternalRemediationRequest(ctx context.
 		Kind:       strings.TrimSuffix(m.Spec.RemediationTemplate.Kind, external.TemplateSuffix),
 		Name:       machineName,
 	}
-	remediationReq, err := external.Get(ctx, r.client, remediationRef, m.Namespace)
-	if err != nil {
-		return nil, err
-	}
-	return remediationReq, nil
+	return external.Get(ctx, r.client, remediationRef, m.Namespace)
 }
 
 // externalRemediationRequestExists checks if the External Remediation Request is created
@@ -601,7 +595,7 @@ func (r *ReconcileMachineHealthCheck) mhcRequestsFromMachine(o client.Object) []
 	return requests
 }
 
-func (t *target) internalRemediation(r *ReconcileMachineHealthCheck) error {
+func (r *ReconcileMachineHealthCheck) internalRemediation(t target) error {
 	klog.Infof(" %s: start remediation logic", t.string())
 
 	if derefStringPointer(t.Machine.Status.Phase) != machinePhaseFailed {

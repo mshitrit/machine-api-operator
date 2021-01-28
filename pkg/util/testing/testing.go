@@ -2,12 +2,12 @@ package testing
 
 import (
 	"fmt"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"time"
 
 	mapiv1 "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/pointer"
 )
@@ -44,7 +44,7 @@ func NewExternalRemediationTemplate() *unstructured.Unstructured {
 	// Create remediation template resource.
 	infraRemediationResource := map[string]interface{}{
 		"kind":       "InfrastructureRemediation",
-		"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+		"apiVersion": "infrastructure.machine.openshift.io/v1alpha3",
 		"metadata":   map[string]interface{}{},
 		"spec": map[string]interface{}{
 			"size": "3xlarge",
@@ -58,7 +58,7 @@ func NewExternalRemediationTemplate() *unstructured.Unstructured {
 		},
 	}
 	infraRemediationTmpl.SetKind("InfrastructureRemediationTemplate")
-	infraRemediationTmpl.SetAPIVersion("infrastructure.cluster.x-k8s.io/v1alpha3")
+	infraRemediationTmpl.SetAPIVersion("infrastructure.machine.openshift.io/v1alpha3")
 	infraRemediationTmpl.SetGenerateName("remediation-template-name-")
 	infraRemediationTmpl.SetNamespace(Namespace)
 
@@ -69,7 +69,7 @@ func NewExternalRemediationMachine() *unstructured.Unstructured {
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "InfrastructureRemediation",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+			"apiVersion": "infrastructure.machine.openshift.io/v1alpha3",
 			"metadata": map[string]interface{}{
 				"name":      "Machine",
 				"namespace": Namespace,

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/mock"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,10 +13,12 @@ import (
 	mapiv1beta1 "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 	"github.com/openshift/machine-api-operator/pkg/util/conditions"
 	maotesting "github.com/openshift/machine-api-operator/pkg/util/testing"
+	"github.com/stretchr/testify/mock"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -2074,7 +2074,7 @@ func TestRemediate(t *testing.T) {
 			objects = append(objects, runtime.Object(&tc.target.Machine))
 			recorder := record.NewFakeRecorder(2)
 			r := newFakeReconcilerWithCustomRecorder(recorder, objects...)
-			if err := tc.target.internalRemediation(r); (err != nil) != tc.expectedError {
+			if err := r.internalRemediation(*tc.target); (err != nil) != tc.expectedError {
 				t.Errorf("Case: %v. Got: %v, expected error: %v", tc.testCase, err, tc.expectedError)
 			}
 			assertEvents(t, tc.testCase, tc.expectedEvents, recorder.Events)
@@ -3042,7 +3042,7 @@ func newMachineHealthCheckWithRemediationTemplate(infraRemediationTmpl *unstruct
 
 	mhc := maotesting.NewMachineHealthCheck("machineHealthCheck")
 	remediationTemplateObjRef := &corev1.ObjectReference{
-		APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+		APIVersion: "infrastructure.machine.openshift.io/v1alpha3",
 		Kind:       "InfrastructureRemediationTemplate",
 		Name:       infraRemediationTmpl.GetName(),
 	}
@@ -3055,8 +3055,8 @@ func newCreateRequest(ownerMachine *mapiv1beta1.Machine) *unstructured.Unstructu
 	m := maotesting.NewExternalRemediationMachine()
 	md := m.Object["metadata"].(map[string]interface{})
 	md["annotations"] = map[string]interface{}{
-		"cluster.x-k8s.io/cloned-from-name":      "",
-		"cluster.x-k8s.io/cloned-from-groupkind": "InfrastructureRemediationTemplate.infrastructure.cluster.x-k8s.io",
+		"machine.openshift.io/cloned-from-name":      "",
+		"machine.openshift.io/cloned-from-groupkind": "InfrastructureRemediationTemplate.infrastructure.machine.openshift.io",
 	}
 	orElement := map[string]interface{}{
 		"apiVersion": ownerMachine.APIVersion,
@@ -3081,7 +3081,7 @@ func matchGetERM() interface{} {
 			return false
 		}
 		return actualRemediationQuery.Object["kind"] == "InfrastructureRemediation" &&
-			actualRemediationQuery.Object["apiVersion"] == "infrastructure.cluster.x-k8s.io/v1alpha3" &&
+			actualRemediationQuery.Object["apiVersion"] == "infrastructure.machine.openshift.io/v1alpha3" &&
 			md["name"] == "Machine"
 	}
 	return mock.MatchedBy(f)
