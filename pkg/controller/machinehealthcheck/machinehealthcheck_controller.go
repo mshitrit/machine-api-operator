@@ -243,6 +243,7 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 		return reconcile.Result{}, err
 	}
 	errList = r.remediate(ctx, needRemediationTargets, errList, mhc)
+	// deletes External Machine Remediation for healthy machines - indicating remediation was successful
 	r.cleanEMR(ctx, currentHealthy, mhc)
 	// return values
 	if len(errList) > 0 {
@@ -266,6 +267,7 @@ func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemedia
 		klog.V(3).Infof("Reconciling %s: meet unhealthy criteria, triggers remediation", t.string())
 		if m.Spec.RemediationTemplate != nil {
 			if err := r.externalRemediation(ctx, m, t); err != nil {
+				klog.Errorf("Reconciling %s: error external remediating: %v", t.string(), err)
 				errList = append(errList, err)
 			}
 		} else {
@@ -278,7 +280,7 @@ func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemedia
 	return errList
 }
 
-// deletes EMR for healthy machines
+// deletes EMR (External Machine Remediation) for healthy machines
 func (r *ReconcileMachineHealthCheck) cleanEMR(ctx context.Context, currentHealthy []target, m *mapiv1.MachineHealthCheck) {
 	if m.Spec.RemediationTemplate == nil {
 		return

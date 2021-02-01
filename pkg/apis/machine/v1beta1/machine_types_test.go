@@ -77,7 +77,7 @@ func TestStorageMachine(t *testing.T) {
 func TestRoundTripMachine(t *testing.T) {
 	codecs := serializer.NewCodecFactory(scheme.Scheme)
 	seed := time.Now().UnixNano()
-	fuzzerVar := fuzzer.FuzzerFor(fuzzer.MergeFuzzerFuncs(metafuzzer.Funcs, machineFuzzerFuncs), rand.NewSource(seed), codecs)
+	machineFuzzer := fuzzer.FuzzerFor(fuzzer.MergeFuzzerFuncs(metafuzzer.Funcs, machineFuzzerFuncs), rand.NewSource(seed), codecs)
 	ctx := context.Background()
 	g := NewWithT(t)
 
@@ -92,8 +92,8 @@ func TestRoundTripMachine(t *testing.T) {
 		// losing data
 		spec := &MachineSpec{}
 		status := &MachineStatus{}
-		fuzzerVar.Fuzz(spec)
-		fuzzerVar.Fuzz(status)
+		machineFuzzer.Fuzz(spec)
+		machineFuzzer.Fuzz(status)
 
 		machine.Spec = *spec.DeepCopy()
 		g.Expect(c.Create(ctx, machine)).To(Succeed())

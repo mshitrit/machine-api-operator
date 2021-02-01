@@ -86,7 +86,7 @@ type MachineHealthCheckSpec struct {
 	//
 	// This field is completely optional, when filled, the MachineHealthCheck controller
 	// creates a new object from the template referenced and hands off remediation of the machine to
-	// a controller that lives outside of Cluster API.
+	// a controller that lives outside of Machine API Operator.
 	// +optional
 	RemediationTemplate *corev1.ObjectReference `json:"remediationTemplate,omitempty"`
 }

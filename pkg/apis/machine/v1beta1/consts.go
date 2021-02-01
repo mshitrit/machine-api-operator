@@ -51,6 +51,15 @@ const (
 	//
 	// Example: cannot resolve EC2 IP address.
 	DeleteMachineError MachineStatusError = "DeleteError"
+
+	// TemplateClonedFromGroupKindAnnotation is the infrastructure machine annotation that stores the group-kind of the infrastructure template resource
+	// that was cloned for the machine. This annotation is set only during cloning a template. Older/adopted machines will not have this annotation.
+	TemplateClonedFromGroupKindAnnotation = "machine.openshift.io/cloned-from-groupkind"
+
+	// TemplateClonedFromNameAnnotation is the infrastructure machine annotation that stores the name of the infrastructure template resource
+	// that was cloned for the machine. This annotation is set only during cloning a template. Older/adopted machines will not have this annotation.
+	TemplateClonedFromNameAnnotation = "machine.openshift.io/cloned-from-name"
+
 )
 
 type ClusterStatusError string
