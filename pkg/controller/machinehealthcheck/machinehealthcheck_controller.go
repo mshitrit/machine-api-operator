@@ -297,6 +297,7 @@ func (r *ReconcileMachineHealthCheck) cleanEMR(ctx context.Context, currentHealt
 		}
 		// Check that obj has no DeletionTimestamp to avoid hot loop
 		if obj.GetDeletionTimestamp() == nil {
+			klog.V(3).Infof("Target has passed health check, deleting the external remediation request", "remediation request name", obj.GetName(), "target", t.string())
 			// Issue a delete for remediation request.
 			if err := r.client.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
 				klog.Errorf("failed to delete %v %q for Machine %q: %v", obj.GroupVersionKind(), obj.GetName(), t.Machine.Name, err)
@@ -306,7 +307,7 @@ func (r *ReconcileMachineHealthCheck) cleanEMR(ctx context.Context, currentHealt
 }
 
 func (r *ReconcileMachineHealthCheck) externalRemediation(ctx context.Context, m *mapiv1.MachineHealthCheck, t target) error {
-
+	klog.Infof(" %s: start external remediation logic", t.string())
 	re, err := r.externalRemediationRequestExists(ctx, m, t.Machine.Name)
 	if err != nil {
 		return fmt.Errorf("error retrieving external remediation  %v %q for machine %q in namespace %q: %v", m.Spec.RemediationTemplate.GroupVersionKind(), m.Spec.RemediationTemplate.Name, t.Machine.Name, t.Machine.Namespace, err)
@@ -599,7 +600,6 @@ func (r *ReconcileMachineHealthCheck) mhcRequestsFromMachine(o client.Object) []
 
 func (r *ReconcileMachineHealthCheck) internalRemediation(t target) error {
 	klog.Infof(" %s: start remediation logic", t.string())
-
 	if derefStringPointer(t.Machine.Status.Phase) != machinePhaseFailed {
 		if remediationStrategy, ok := t.MHC.Annotations[remediationStrategyAnnotation]; ok {
 			if mapiv1.RemediationStrategyType(remediationStrategy) == remediationStrategyExternal {
