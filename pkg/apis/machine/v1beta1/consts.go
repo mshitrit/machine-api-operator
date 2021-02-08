@@ -55,8 +55,8 @@ const (
 	// TemplateClonedFromNameAnnotation is the infrastructure machine annotation that stores the name of the infrastructure template resource
 	// that was cloned for the machine. This annotation is set only during cloning a template. Older/adopted machines will not have this annotation.
 	TemplateClonedFromNameAnnotation = "machine.openshift.io/cloned-from-name"
-
 )
+
 // Constants aren't automatically generated for unversioned packages.
 // Instead share the same constant for all versioned packages
 type MachineStatusError string
