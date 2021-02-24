@@ -625,6 +625,11 @@ func (t *target) needsRemediation(timeoutForMachineToHaveNode time.Duration) (bo
 
 	// machine has failed
 	if derefStringPointer(t.Machine.Status.Phase) == machinePhaseFailed {
+		//backoff to allow user to fix the error
+		if t.Machine.Status.NodeRef == nil || t.Machine.Spec.ProviderID == nil {
+			klog.Warningf("Machine %s has %s status, remediation is skipped to allow manual intervention", machinePhaseFailed, t.Machine.Name)
+			return false, time.Duration(0), nil
+		}
 		klog.V(3).Infof("%s: unhealthy: machine phase is %q", t.string(), machinePhaseFailed)
 		return true, time.Duration(0), nil
 	}

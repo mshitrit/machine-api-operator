@@ -239,6 +239,11 @@ func TestReconcile(t *testing.T) {
 	negativeOne := intstr.FromInt(-1)
 	machineHealthCheckNegativeMaxUnhealthy.Spec.MaxUnhealthy = &negativeOne
 
+	//Failed Machine
+	machineWithFailedStatus := maotesting.NewMachine("machineWithFailedStatus", "")
+	failedVar := machinePhaseFailed
+	machineWithFailedStatus.Status.Phase = &failedVar
+
 	// remediationExternal
 	nodeUnhealthyForTooLong := maotesting.NewNode("nodeUnhealthyForTooLong", false)
 	nodeUnhealthyForTooLong.Annotations = map[string]string{
@@ -438,6 +443,25 @@ func TestReconcile(t *testing.T) {
 				ExpectedMachines:    IntPtr(1),
 				CurrentHealthy:      IntPtr(1),
 				RemediationsAllowed: 0,
+				Conditions: mapiv1beta1.Conditions{
+					remediationAllowedCondition,
+				},
+			},
+		},
+		{
+			testCase: "failed machine not remediated",
+			machine:  machineWithFailedStatus,
+			node:     nodeAlreadyDeleted,
+			mhc:      machineHealthCheck,
+			expected: expectedReconcile{
+				result: reconcile.Result{},
+				error:  false,
+			},
+			expectedEvents: []string{},
+			expectedStatus: &mapiv1beta1.MachineHealthCheckStatus{
+				ExpectedMachines:    IntPtr(1),
+				CurrentHealthy:      IntPtr(1),
+				RemediationsAllowed: 1,
 				Conditions: mapiv1beta1.Conditions{
 					remediationAllowedCondition,
 				},
@@ -1462,6 +1486,7 @@ func TestGetNodeFromMachine(t *testing.T) {
 
 func TestNeedsRemediation(t *testing.T) {
 	knownDate := metav1.Time{Time: time.Date(1985, 06, 03, 0, 0, 0, 0, time.Local)}
+	providerID := "mockProviderId"
 	machineFailed := machinePhaseFailed
 	testCases := []struct {
 		testCase                    string
@@ -1713,7 +1738,9 @@ func TestNeedsRemediation(t *testing.T) {
 						Labels:          map[string]string{"foo": "bar"},
 						OwnerReferences: []metav1.OwnerReference{{Kind: "MachineSet"}},
 					},
-					Spec: mapiv1beta1.MachineSpec{},
+					Spec: mapiv1beta1.MachineSpec{
+						ProviderID: &providerID,
+					},
 					Status: mapiv1beta1.MachineStatus{
 						Phase: &machineFailed,
 					},
