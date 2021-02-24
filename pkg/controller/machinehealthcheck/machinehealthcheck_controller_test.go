@@ -234,6 +234,7 @@ func TestReconcile(t *testing.T) {
 	machineHealthCheck := maotesting.NewMachineHealthCheck("machineHealthCheck")
 	nodeStartupTimeout := 15 * time.Minute
 	machineHealthCheck.Spec.NodeStartupTimeout = metav1.Duration{Duration: nodeStartupTimeout}
+	machineHealthCheck.Spec.FailedNodeStartupTimeout = metav1.Duration{Duration: time.Hour}
 
 	machineHealthCheckNegativeMaxUnhealthy := maotesting.NewMachineHealthCheck("machineHealthCheckNegativeMaxUnhealthy")
 	negativeOne := intstr.FromInt(-1)
@@ -243,6 +244,7 @@ func TestReconcile(t *testing.T) {
 	machineWithFailedStatus := maotesting.NewMachine("machineWithFailedStatus", "")
 	failedVar := machinePhaseFailed
 	machineWithFailedStatus.Status.Phase = &failedVar
+	machineWithFailedStatus.CreationTimestamp = metav1.Now()
 
 	// remediationExternal
 	nodeUnhealthyForTooLong := maotesting.NewNode("nodeUnhealthyForTooLong", false)
@@ -1860,7 +1862,7 @@ func TestNeedsRemediation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.testCase, func(t *testing.T) {
-			needsRemediation, nextCheck, err := tc.target.needsRemediation(tc.timeoutForMachineToHaveNode)
+			needsRemediation, nextCheck, err := tc.target.needsRemediation(tc.timeoutForMachineToHaveNode, 0)
 			if needsRemediation != tc.expectedNeedsRemediation {
 				t.Errorf("Case: %v. Got: %v, expected: %v", tc.testCase, needsRemediation, tc.expectedNeedsRemediation)
 			}
@@ -2541,7 +2543,7 @@ func TestHealthCheckTargets(t *testing.T) {
 		recorder := record.NewFakeRecorder(2)
 		r := newFakeReconcilerWithCustomRecorder(recorder)
 		t.Run(tc.testCase, func(t *testing.T) {
-			currentHealthy, needRemediationTargets, nextCheckTimes, errList := r.healthCheckTargets(tc.targets, tc.timeoutForMachineToHaveNode)
+			currentHealthy, needRemediationTargets, nextCheckTimes, errList := r.healthCheckTargets(tc.targets, tc.timeoutForMachineToHaveNode, 0)
 			if currentHealthy != tc.currentHealthy {
 				t.Errorf("Case: %v. Got: %v, expected: %v", tc.testCase, currentHealthy, tc.currentHealthy)
 			}
