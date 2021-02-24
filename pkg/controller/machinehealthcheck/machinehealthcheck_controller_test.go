@@ -32,13 +32,9 @@ const (
 	namespace = "openshift-machine-api"
 )
 
-var (
-	ctx = context.Background()
-)
-
 func init() {
 	// Add types to scheme
-	mapiv1beta1.AddToScheme(scheme.Scheme)
+	_ = mapiv1beta1.AddToScheme(scheme.Scheme)
 }
 
 func TestHasMatchingLabels(t *testing.T) {
@@ -179,7 +175,7 @@ func newFakeReconciler(initObjects ...runtime.Object) *ReconcileMachineHealthChe
 }
 
 func newFakeReconcilerWithCustomRecorder(recorder record.EventRecorder, initObjects ...runtime.Object) *ReconcileMachineHealthCheck {
-	fakeClient := fake.NewFakeClient(initObjects...)
+	fakeClient := fake.NewClientBuilder().WithRuntimeObjects(initObjects...).Build()
 	return &ReconcileMachineHealthCheck{
 		client:    fakeClient,
 		scheme:    scheme.Scheme,
@@ -494,6 +490,9 @@ func TestReconcile(t *testing.T) {
 				},
 			}
 			result, err := r.Reconcile(ctx, request)
+			if &result == nil {
+				t.Errorf("Test case: %s. Expected: non nil result error, got: nil", tc.node.Name)
+			}
 			assertEvents(t, tc.testCase, tc.expectedEvents, recorder.Events)
 			if tc.expected.error != (err != nil) {
 				var errorExpectation string
@@ -1588,7 +1587,7 @@ func TestNeedsRemediation(t *testing.T) {
 					},
 					Spec: mapiv1beta1.MachineSpec{},
 					Status: mapiv1beta1.MachineStatus{
-						LastUpdated: &metav1.Time{Time: time.Now().Add(time.Duration(-defaultNodeStartupTimeout) - 1*time.Second)},
+						LastUpdated: &metav1.Time{Time: time.Now().Add(-defaultNodeStartupTimeout - time.Second)},
 					},
 				},
 				Node: nil,
@@ -1641,7 +1640,7 @@ func TestNeedsRemediation(t *testing.T) {
 					},
 					Spec: mapiv1beta1.MachineSpec{},
 					Status: mapiv1beta1.MachineStatus{
-						LastUpdated: &metav1.Time{Time: time.Now().Add(time.Duration(-defaultNodeStartupTimeout) - 1*time.Second)},
+						LastUpdated: &metav1.Time{Time: time.Now().Add(-defaultNodeStartupTimeout - time.Second)},
 					},
 				},
 				Node: &corev1.Node{
@@ -1769,7 +1768,7 @@ func TestNeedsRemediation(t *testing.T) {
 					},
 					Spec: mapiv1beta1.MachineSpec{},
 					Status: mapiv1beta1.MachineStatus{
-						LastUpdated: &metav1.Time{Time: time.Now().Add(time.Duration(-defaultNodeStartupTimeout) - 1*time.Second)},
+						LastUpdated: &metav1.Time{Time: time.Now().Add(-defaultNodeStartupTimeout - time.Second)},
 					},
 				},
 				Node: &corev1.Node{
@@ -1827,7 +1826,7 @@ func TestNeedsRemediation(t *testing.T) {
 			},
 			timeoutForMachineToHaveNode: defaultNodeStartupTimeout,
 			expectedNeedsRemediation:    false,
-			expectedNextCheck:           time.Duration(1 * time.Minute), // 300-200 rounded
+			expectedNextCheck:           time.Minute, // 300-200 rounded
 			expectedError:               false,
 		},
 	}
@@ -2404,7 +2403,7 @@ func TestHealthCheckTargets(t *testing.T) {
 						},
 						Spec: mapiv1beta1.MachineSpec{},
 						Status: mapiv1beta1.MachineStatus{
-							LastUpdated: &metav1.Time{Time: now.Add(time.Duration(-defaultNodeStartupTimeout) + 1*time.Minute)},
+							LastUpdated: &metav1.Time{Time: now.Add(time.Minute - defaultNodeStartupTimeout)},
 						},
 					},
 					Node: nil,
@@ -2515,9 +2514,9 @@ func TestHealthCheckTargets(t *testing.T) {
 		recorder := record.NewFakeRecorder(2)
 		r := newFakeReconcilerWithCustomRecorder(recorder)
 		t.Run(tc.testCase, func(t *testing.T) {
-			currentHealhty, needRemediationTargets, nextCheckTimes, errList := r.healthCheckTargets(tc.targets, tc.timeoutForMachineToHaveNode)
-			if currentHealhty != tc.currentHealthy {
-				t.Errorf("Case: %v. Got: %v, expected: %v", tc.testCase, currentHealhty, tc.currentHealthy)
+			currentHealthy, needRemediationTargets, nextCheckTimes, errList := r.healthCheckTargets(tc.targets, tc.timeoutForMachineToHaveNode)
+			if currentHealthy != tc.currentHealthy {
+				t.Errorf("Case: %v. Got: %v, expected: %v", tc.testCase, currentHealthy, tc.currentHealthy)
 			}
 			if !equality.Semantic.DeepEqual(needRemediationTargets, tc.needRemediationTargets) {
 				t.Errorf("Case: %v. Got: %v, expected: %v", tc.testCase, needRemediationTargets, tc.needRemediationTargets)

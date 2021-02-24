@@ -68,6 +68,26 @@ const (
 	EventExternalAnnotationAdded string = "ExternalAnnotationAdded"
 )
 
+var (
+	_ reconcile.Reconciler = &ReconcileMachineHealthCheck{}
+)
+
+// ReconcileMachineHealthCheck reconciles a MachineHealthCheck object
+type ReconcileMachineHealthCheck struct {
+	// This client, initialized using mgr.Client() above, is a split client
+	// that reads objects from the cache and writes to the apiserver
+	client    client.Client
+	scheme    *runtime.Scheme
+	namespace string
+	recorder  record.EventRecorder
+}
+
+type target struct {
+	Machine mapiv1.Machine
+	Node    *corev1.Node
+	MHC     mapiv1.MachineHealthCheck
+}
+
 // Add creates a new MachineHealthCheck Controller and adds it to the Manager. The Manager will set fields on the Controller
 // and start it when the Manager is started.
 func Add(mgr manager.Manager, opts manager.Options) error {
@@ -130,24 +150,6 @@ func add(mgr manager.Manager, r reconcile.Reconciler, mapMachineToMHC, mapNodeTo
 	return c.Watch(&source.Kind{Type: &corev1.Node{}}, handler.EnqueueRequestsFromMapFunc(mapNodeToMHC))
 }
 
-var _ reconcile.Reconciler = &ReconcileMachineHealthCheck{}
-
-// ReconcileMachineHealthCheck reconciles a MachineHealthCheck object
-type ReconcileMachineHealthCheck struct {
-	// This client, initialized using mgr.Client() above, is a split client
-	// that reads objects from the cache and writes to the apiserver
-	client    client.Client
-	scheme    *runtime.Scheme
-	namespace string
-	recorder  record.EventRecorder
-}
-
-type target struct {
-	Machine mapiv1.Machine
-	Node    *corev1.Node
-	MHC     mapiv1.MachineHealthCheck
-}
-
 // Reconcile fetch all targets for a MachineHealthCheck request and does health checking for each of them
 func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	klog.Infof("Reconciling %s", request.String())
@@ -185,45 +187,7 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 
 	// check MHC current health against MaxUnhealthy
 	if !isAllowedRemediation(mhc) {
-		klog.Warningf("Reconciling %s: total targets: %v,  maxUnhealthy: %v, unhealthy: %v. Short-circuiting remediation",
-			request.String(),
-			totalTargets,
-			mhc.Spec.MaxUnhealthy,
-			totalTargets-currentHealthy,
-		)
-
-		message := fmt.Sprintf("Remediation is not allowed, the number of not started or unhealthy machines exceeds maxUnhealthy (total: %v, unhealthy: %v, maxUnhealthy: %v)",
-			totalTargets,
-			unhealthyCount,
-			mhc.Spec.MaxUnhealthy,
-		)
-
-		// Remediation not allowed, the number of not started or unhealthy machines exceeds maxUnhealthy
-		mhc.Status.RemediationsAllowed = 0
-		conditions.Set(mhc, &mapiv1.Condition{
-			Type:     mapiv1.RemediationAllowedCondition,
-			Status:   corev1.ConditionFalse,
-			Severity: mapiv1.ConditionSeverityWarning,
-			Reason:   mapiv1.TooManyUnhealthyReason,
-			Message:  message,
-		})
-
-		if err := r.reconcileStatus(mergeBase, mhc); err != nil {
-			klog.Errorf("Reconciling %s: error patching status: %v", request.String(), err)
-			return reconcile.Result{}, err
-		}
-
-		r.recorder.Eventf(
-			mhc,
-			corev1.EventTypeWarning,
-			EventRemediationRestricted,
-			"Remediation restricted due to exceeded number of unhealthy machines (total: %v, unhealthy: %v, maxUnhealthy: %v)",
-			totalTargets,
-			unhealthyCount,
-			mhc.Spec.MaxUnhealthy,
-		)
-		metrics.ObserveMachineHealthCheckShortCircuitEnabled(mhc.Name, mhc.Namespace)
-		return reconcile.Result{Requeue: true}, nil
+		return r.shortCircuitRemediation(request, totalTargets, mhc, currentHealthy, unhealthyCount, mergeBase)
 	}
 	klog.V(3).Infof("Remediations are allowed for %s: total targets: %v,  max unhealthy: %v, unhealthy targets: %v",
 		request.String(),
@@ -262,6 +226,48 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 
 	klog.V(3).Infof("Reconciling %s: no more targets meet unhealthy criteria", request.String())
 	return reconcile.Result{}, nil
+}
+
+func (r *ReconcileMachineHealthCheck) shortCircuitRemediation(request reconcile.Request, totalTargets int, mhc *mapiv1.MachineHealthCheck, currentHealthy int, unhealthyCount int, mergeBase client.Patch) (reconcile.Result, error) {
+	klog.Warningf("Reconciling %s: total targets: %v,  maxUnhealthy: %v, unhealthy: %v. Short-circuiting remediation",
+		request.String(),
+		totalTargets,
+		mhc.Spec.MaxUnhealthy,
+		totalTargets-currentHealthy,
+	)
+
+	message := fmt.Sprintf("Remediation is not allowed, the number of not started or unhealthy machines exceeds maxUnhealthy (total: %v, unhealthy: %v, maxUnhealthy: %v)",
+		totalTargets,
+		unhealthyCount,
+		mhc.Spec.MaxUnhealthy,
+	)
+
+	// Remediation not allowed, the number of not started or unhealthy machines exceeds maxUnhealthy
+	mhc.Status.RemediationsAllowed = 0
+	conditions.Set(mhc, &mapiv1.Condition{
+		Type:     mapiv1.RemediationAllowedCondition,
+		Status:   corev1.ConditionFalse,
+		Severity: mapiv1.ConditionSeverityWarning,
+		Reason:   mapiv1.TooManyUnhealthyReason,
+		Message:  message,
+	})
+
+	if err := r.reconcileStatus(mergeBase, mhc); err != nil {
+		klog.Errorf("Reconciling %s: error patching status: %v", request.String(), err)
+		return reconcile.Result{}, err
+	}
+
+	r.recorder.Eventf(
+		mhc,
+		corev1.EventTypeWarning,
+		EventRemediationRestricted,
+		"Remediation restricted due to exceeded number of unhealthy machines (total: %v, unhealthy: %v, maxUnhealthy: %v)",
+		totalTargets,
+		unhealthyCount,
+		mhc.Spec.MaxUnhealthy,
+	)
+	metrics.ObserveMachineHealthCheckShortCircuitEnabled(mhc.Name, mhc.Namespace)
+	return reconcile.Result{Requeue: true}, nil
 }
 
 func isAllowedRemediation(mhc *mapiv1.MachineHealthCheck) bool {
@@ -686,7 +692,7 @@ func minDuration(durations []time.Duration) time.Duration {
 		return time.Duration(0)
 	}
 
-	minDuration := time.Duration(1 * time.Hour)
+	minDuration := time.Hour
 	for _, nc := range durations {
 		if nc < minDuration {
 			minDuration = nc
@@ -764,7 +770,7 @@ func getIntOrPercentValue(intOrStr *intstr.IntOrString) (int, bool, error) {
 		if err != nil {
 			return 0, isPercent, fmt.Errorf("invalid value %q: %v", intOrStr.StrVal, err)
 		}
-		return int(v), isPercent, nil
+		return v, isPercent, nil
 	}
 	return 0, false, fmt.Errorf("invalid type: neither int nor percentage")
 }
