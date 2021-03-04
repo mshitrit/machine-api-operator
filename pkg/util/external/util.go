@@ -18,9 +18,9 @@ package external
 
 import (
 	"context"
+	"fmt"
 
 	mapiv1 "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
-	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -45,7 +45,7 @@ func Get(ctx context.Context, c client.Client, ref *corev1.ObjectReference, name
 	obj.SetName(ref.Name)
 	key := client.ObjectKey{Name: obj.GetName(), Namespace: namespace}
 	if err := c.Get(ctx, key, obj); err != nil {
-		return nil, errors.Wrapf(err, "failed to retrieve %s external object %q/%q", obj.GetKind(), key.Namespace, key.Name)
+		return nil, fmt.Errorf("failed to retrieve %s external object %q/%q: %w", obj.GetKind(), key.Namespace, key.Name, err)
 	}
 	return obj, nil
 }
@@ -76,9 +76,9 @@ type GenerateTemplateInput struct {
 func GenerateTemplate(in *GenerateTemplateInput) (*unstructured.Unstructured, error) {
 	template, found, err := unstructured.NestedMap(in.Template.Object, "spec", "template")
 	if !found {
-		return nil, errors.Errorf("missing Spec.Template on %v %q", in.Template.GroupVersionKind(), in.Template.GetName())
+		return nil, fmt.Errorf("missing Spec.Template on %v %q", in.Template.GroupVersionKind(), in.Template.GetName())
 	} else if err != nil {
-		return nil, errors.Wrapf(err, "failed to retrieve Spec.Template map on %v %q", in.Template.GroupVersionKind(), in.Template.GetName())
+		return nil, fmt.Errorf("failed to retrieve Spec.Template map on %v %q", in.Template.GroupVersionKind(), in.Template.GetName())
 	}
 
 	// Create the unstructured object from the template.

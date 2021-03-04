@@ -242,7 +242,7 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 		klog.Errorf("Reconciling %s: error patching status: %v", request.String(), err)
 		return reconcile.Result{}, err
 	}
-	errList = r.remediate(ctx, needRemediationTargets, errList, mhc)
+	errList = append(errList, r.remediate(ctx, needRemediationTargets, mhc)...)
 	// deletes External Machine Remediation for healthy machines - indicating remediation was successful
 	r.cleanEMR(ctx, currentHealthy, mhc)
 	// return values
@@ -261,7 +261,8 @@ func (r *ReconcileMachineHealthCheck) Reconcile(ctx context.Context, request rec
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemediationTargets []target, errList []error, m *mapiv1.MachineHealthCheck) []error {
+func (r *ReconcileMachineHealthCheck) remediate(ctx context.Context, needRemediationTargets []target, m *mapiv1.MachineHealthCheck) []error {
+	var errList []error
 	// remediate unhealthy
 	for _, t := range needRemediationTargets {
 		klog.V(3).Infof("Reconciling %s: meet unhealthy criteria, triggers remediation", t.string())
@@ -290,10 +291,10 @@ func (r *ReconcileMachineHealthCheck) cleanEMR(ctx context.Context, currentHealt
 		// Get remediation request object
 		obj, err := r.getExternalRemediationRequest(ctx, m, t.Machine.Name)
 		if err != nil {
-			if apierrors.IsNotFound(err) {
-				continue
+			if !apierrors.IsNotFound(err) {
+				klog.Errorf("failed to fetch remediation request for machine %q in namespace %q: %v", t.Machine.Name, t.Machine.Namespace, err)
 			}
-			klog.Errorf("failed to fetch remediation request for machine %q in namespace %q: %v", t.Machine.Name, t.Machine.Namespace, err)
+			continue
 		}
 		// Check that obj has no DeletionTimestamp to avoid hot loop
 		if obj.GetDeletionTimestamp() == nil {
@@ -437,7 +438,10 @@ func (r *ReconcileMachineHealthCheck) reconcileStatus(baseToPatch client.Patch, 
 
 // healthCheckTargets health checks a slice of targets
 // and gives a data to measure the average health
-func (r *ReconcileMachineHealthCheck) healthCheckTargets(targets []target, timeoutForMachineToHaveNode time.Duration) (currentHealthy []target, needRemediationTargets []target, nextCheckTimes []time.Duration, errList []error) {
+func (r *ReconcileMachineHealthCheck) healthCheckTargets(targets []target, timeoutForMachineToHaveNode time.Duration) ([]target, []target, []time.Duration, []error) {
+	var errList []error
+	var needRemediationTargets, currentHealthy []target
+	var nextCheckTimes []time.Duration
 	for _, t := range targets {
 		klog.V(3).Infof("Reconciling %s: health checking", t.string())
 		needsRemediation, nextCheck, err := t.needsRemediation(timeoutForMachineToHaveNode)
