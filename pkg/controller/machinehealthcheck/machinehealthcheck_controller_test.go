@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/machine-api-operator/pkg/util/external"
+
 	. "github.com/onsi/gomega"
 	mapiv1beta1 "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 	"github.com/openshift/machine-api-operator/pkg/util/conditions"
 	maotesting "github.com/openshift/machine-api-operator/pkg/util/testing"
-	"github.com/stretchr/testify/mock"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -51,11 +52,6 @@ type testCase struct {
 	expectedStatus              *mapiv1beta1.MachineHealthCheckStatus
 	externalRemediationMachine  *unstructured.Unstructured
 	externalRemediationTemplate *unstructured.Unstructured
-}
-
-type clientWrap struct {
-	mock.Mock
-	client.Client
 }
 
 type expectedReconcile struct {
@@ -468,8 +464,8 @@ func TestReconcileExternalRemediationTemplate(t *testing.T) {
 	machineWithNodeUnHealthy := maotesting.NewMachine("Machine", nodeUnHealthy.Name)
 	machineWithNodeUnHealthy.APIVersion = mapiv1beta1.SchemeGroupVersion.String()
 	//external remediation machine template crd
-	erTemplate := maotesting.NewExternalRemediationTemplate()
-	mhcWithRemediationTemplate := newMachineHealthCheckWithRemediationTemplate(erTemplate)
+	ermTemplate := maotesting.NewExternalRemediationTemplate()
+	mhcWithRemediationTemplate := newMachineHealthCheckWithRemediationTemplate(ermTemplate)
 	erm := maotesting.NewExternalRemediationMachine()
 
 	testCases := []testCase{
@@ -480,7 +476,7 @@ func TestReconcileExternalRemediationTemplate(t *testing.T) {
 			node:                        nodeHealthy,
 			mhc:                         mhcWithRemediationTemplate,
 			externalRemediationMachine:  erm,
-			externalRemediationTemplate: erTemplate,
+			externalRemediationTemplate: ermTemplate,
 			expected: expectedReconcile{
 				result: reconcile.Result{},
 				error:  false,
@@ -502,7 +498,7 @@ func TestReconcileExternalRemediationTemplate(t *testing.T) {
 			node:                        nodeUnHealthy,
 			mhc:                         mhcWithRemediationTemplate,
 			externalRemediationMachine:  nil,
-			externalRemediationTemplate: erTemplate,
+			externalRemediationTemplate: ermTemplate,
 			expected: expectedReconcile{
 				result: reconcile.Result{},
 				error:  false,
@@ -524,7 +520,7 @@ func TestReconcileExternalRemediationTemplate(t *testing.T) {
 			node:                        nodeUnHealthy,
 			mhc:                         mhcWithRemediationTemplate,
 			externalRemediationMachine:  erm,
-			externalRemediationTemplate: erTemplate,
+			externalRemediationTemplate: ermTemplate,
 			expected: expectedReconcile{
 				result: reconcile.Result{},
 				error:  false,
@@ -547,7 +543,7 @@ func TestReconcileExternalRemediationTemplate(t *testing.T) {
 			r := newFakeReconcilerWithCustomRecorder(recorder, buildRunTimeObjects(tc)...)
 			assertBaseReconcile(t, tc, ctx, r)
 			//assertExternalRemediation
-			assertExternalRemediation(t, r, tc)
+			assertExternalRemediation(t, tc, ctx, r)
 
 		})
 	}
@@ -2952,7 +2948,7 @@ func newFakeReconciler(initObjects ...runtime.Object) *ReconcileMachineHealthChe
 func newFakeReconcilerWithCustomRecorder(recorder record.EventRecorder, initObjects ...runtime.Object) *ReconcileMachineHealthCheck {
 	fakeClient := fake.NewClientBuilder().WithRuntimeObjects(initObjects...).Build()
 	return &ReconcileMachineHealthCheck{
-		client:    &clientWrap{Client: fakeClient},
+		client:    fakeClient,
 		scheme:    scheme.Scheme,
 		namespace: namespace,
 		recorder:  recorder,
@@ -3000,44 +2996,21 @@ func assertBaseReconcile(t *testing.T, tc testCase, ctx context.Context, r *Reco
 	}
 }
 
-func assertExternalRemediation(t *testing.T, r *ReconcileMachineHealthCheck, tc testCase) {
-	if tc.mhc.Spec.RemediationTemplate == nil {
-		return
-	}
-
-	spyClient := r.client.(*clientWrap)
-
-	for _, c := range spyClient.Calls {
-		if c.Method == "Get" {
-			fmt.Print(c.Arguments)
-		}
-	}
-
-	tautologicalMatcher := mock.MatchedBy(func(interface{}) bool { return true })
-
+func assertExternalRemediation(t *testing.T, tc testCase, ctx context.Context, r *ReconcileMachineHealthCheck) {
 	//When remediationTemplate is set and node transitions to unhealthy, new Remediation Request should be created
 	nodeReadyStatus := tc.node.Status.Conditions[0].Status
 	if tc.externalRemediationMachine == nil {
 		//Trying to get External Machine Remediation
-		spyClient.AssertCalled(t, "Get", context.Background(), buildMatcher(client.ObjectKey{Name: "Machine", Namespace: namespace}), matchGetERM())
-		spyClient.AssertNumberOfCalls(t, "Create", 1)
-		spyClient.AssertCalled(t, "Create", context.Background(), buildMatcher(newCreateRequest(tc.machine)), tautologicalMatcher)
-		spyClient.AssertNumberOfCalls(t, "Delete", 0)
-
+		verifyErm(t, tc, ctx, r.client, true)
 	} else if nodeReadyStatus == corev1.ConditionTrue { //When remediationTemplate is set and node transitions back to healthy, new Remediation Request should be deleted
 		//Trying to get External Machine Remediation
-		spyClient.AssertCalled(t, "Get", context.Background(), buildMatcher(client.ObjectKey{Name: "Machine", Namespace: namespace}), matchGetERM())
-		spyClient.AssertNumberOfCalls(t, "Create", 0)
-		spyClient.AssertNumberOfCalls(t, "Delete", 1)
-		spyClient.AssertCalled(t, "Delete", context.Background(), tc.externalRemediationMachine, tautologicalMatcher)
-
+		verifyErm(t, tc, ctx, r.client, false)
 	} else { //When remediationTemplate is already in process
 		//Trying to get External Machine Remediation
-		spyClient.AssertCalled(t, "Get", context.Background(), buildMatcher(client.ObjectKey{Name: "Machine", Namespace: namespace}), matchGetERM())
-		spyClient.AssertNumberOfCalls(t, "Create", 0)
-		spyClient.AssertNumberOfCalls(t, "Delete", 0)
+		verifyErm(t, tc, ctx, r.client, true)
 	}
 }
+
 func newMachineHealthCheckWithRemediationTemplate(infraRemediationTmpl *unstructured.Unstructured) *mapiv1beta1.MachineHealthCheck {
 
 	mhc := maotesting.NewMachineHealthCheck("machineHealthCheck")
@@ -3049,77 +3022,6 @@ func newMachineHealthCheckWithRemediationTemplate(infraRemediationTmpl *unstruct
 
 	mhc.Spec.RemediationTemplate = remediationTemplateObjRef
 	return mhc
-}
-
-func newCreateRequest(ownerMachine *mapiv1beta1.Machine) *unstructured.Unstructured {
-	m := maotesting.NewExternalRemediationMachine()
-	md := m.Object["metadata"].(map[string]interface{})
-	md["annotations"] = map[string]interface{}{
-		"machine.openshift.io/cloned-from-name":      "",
-		"machine.openshift.io/cloned-from-groupkind": "InfrastructureRemediationTemplate.infrastructure.machine.openshift.io",
-	}
-	orElement := map[string]interface{}{
-		"apiVersion": ownerMachine.APIVersion,
-		"kind":       ownerMachine.Kind,
-		"name":       ownerMachine.Name,
-		"uid":        ownerMachine.UID,
-	}
-	md["ownerReferences"] = []interface{}{orElement}
-	md["resourceVersion"] = "1"
-	return m
-}
-
-//Matchers
-func matchGetERM() interface{} {
-	f := func(actual interface{}) bool {
-		actualRemediationQuery, ok := actual.(*unstructured.Unstructured)
-		if !ok {
-			return false
-		}
-		md, ok := actualRemediationQuery.Object["metadata"].(map[string]interface{})
-		if !ok {
-			return false
-		}
-		return actualRemediationQuery.Object["kind"] == "InfrastructureRemediation" &&
-			actualRemediationQuery.Object["apiVersion"] == "infrastructure.machine.openshift.io/v1alpha3" &&
-			md["name"] == "Machine"
-	}
-	return mock.MatchedBy(f)
-}
-
-func buildMatcher(expected interface{}) interface{} {
-	f := func(actual interface{}) bool {
-
-		if actual == nil || expected == nil {
-			return actual == expected
-		}
-
-		if reflect.TypeOf(expected) != reflect.TypeOf(actual) {
-			return false
-		}
-
-		return fmt.Sprint(actual) == fmt.Sprint(expected)
-	}
-
-	return mock.MatchedBy(f)
-}
-
-func (cw *clientWrap) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	cw.Mock.On("Create", ctx, obj, opts).Return(nil)
-	cw.Mock.Called(ctx, obj, opts)
-	return cw.Client.Create(ctx, obj, opts...)
-}
-
-func (cw *clientWrap) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	cw.Mock.On("Delete", ctx, obj, opts).Return(nil)
-	cw.Mock.Called(ctx, obj, opts)
-	return cw.Client.Delete(ctx, obj, opts...)
-}
-
-func (cw *clientWrap) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
-	cw.Mock.On("Get", ctx, key, obj).Return(nil)
-	cw.Mock.Called(ctx, key, obj)
-	return cw.Client.Get(ctx, key, obj)
 }
 
 func buildRunTimeObjects(tc testCase) []runtime.Object {
@@ -3137,4 +3039,22 @@ func buildRunTimeObjects(tc testCase) []runtime.Object {
 	}
 
 	return objects
+}
+
+func verifyErm(t *testing.T, tc testCase, ctx context.Context, client client.Client, isExist bool) {
+	g := NewWithT(t)
+	erm := new(unstructured.Unstructured)
+	erm.SetAPIVersion(tc.externalRemediationTemplate.GetAPIVersion())
+	erm.SetKind(strings.TrimSuffix(tc.externalRemediationTemplate.GetKind(), external.TemplateSuffix))
+	erm.SetName(tc.machine.GetName())
+
+	nameSpace := types.NamespacedName{
+		Namespace: tc.externalRemediationTemplate.GetNamespace(),
+		Name:      tc.machine.GetName(),
+	}
+	if isExist {
+		g.Expect(client.Get(ctx, nameSpace, erm)).To(Succeed())
+	} else {
+		g.Expect(client.Get(ctx, nameSpace, erm)).NotTo(Succeed())
+	}
 }

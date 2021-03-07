@@ -40,27 +40,19 @@ func NewSelectorFooBar() *metav1.LabelSelector {
 }
 
 func NewExternalRemediationTemplate() *unstructured.Unstructured {
-
 	// Create remediation template resource.
-	infraRemediationResource := map[string]interface{}{
-		"kind":       "InfrastructureRemediation",
-		"apiVersion": "infrastructure.machine.openshift.io/v1alpha3",
-		"metadata":   map[string]interface{}{},
-		"spec": map[string]interface{}{
-			"size": "3xlarge",
-		},
-	}
 	infraRemediationTmpl := &unstructured.Unstructured{
 		Object: map[string]interface{}{
+			"kind":       "InfrastructureRemediationTemplate",
+			"apiVersion": "infrastructure.machine.openshift.io/v1alpha3",
 			"spec": map[string]interface{}{
-				"template": infraRemediationResource,
+				"template": map[string]interface{}{},
+			},
+			"metadata": map[string]interface{}{
+				"namespace": Namespace,
 			},
 		},
 	}
-	infraRemediationTmpl.SetKind("InfrastructureRemediationTemplate")
-	infraRemediationTmpl.SetAPIVersion("infrastructure.machine.openshift.io/v1alpha3")
-	infraRemediationTmpl.SetGenerateName("remediation-template-name-")
-	infraRemediationTmpl.SetNamespace(Namespace)
 
 	return infraRemediationTmpl
 }
@@ -73,9 +65,6 @@ func NewExternalRemediationMachine() *unstructured.Unstructured {
 			"metadata": map[string]interface{}{
 				"name":      "Machine",
 				"namespace": Namespace,
-			},
-			"spec": map[string]interface{}{
-				"size": "3xlarge",
 			},
 		},
 	}
